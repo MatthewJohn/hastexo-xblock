@@ -313,6 +313,7 @@ class AwsProvider(Provider):
                 }
             ]
         )
+        ec2_instances = [instance for instance in ec2_instances]
         if ec2_instances:
             self.logger.info('Found instance '
                 '[%s]' % deployment_name)
