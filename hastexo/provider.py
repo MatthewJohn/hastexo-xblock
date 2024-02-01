@@ -293,6 +293,8 @@ class AwsProvider(Provider):
                     "name": stack_name,
                     "status": self.get_stack(stack_name)["status"]
                 })
+        self.logger.info('get all stacks: '
+                         '{}'.format(stacks))
         return stacks
 
     def _get_instance(self, name):
@@ -341,18 +343,28 @@ class AwsProvider(Provider):
 
     def get_stack(self, name):
         # Get instance
+        self.logger.info('get stack '
+                             '[%s]' % name)
         instance = self._get_instance(name)
         status = None
         outputs = {}
         if not instance:
             status = DELETE_COMPLETE
+            self.logger.info('no instance found '
+                            '[%s]' % name)
             return {"status": status, "outputs": outputs}
         status_code = instance.state.get("Code")
+        self.logger.info('get stack '
+                             '[%s]' % name)
 
-        return {
+        details = {
             "status": self._get_deployment_status(status_code),
             "outputs": self._get_instance_outputs(name)
         }
+        self.logger.info('instance details '
+                         '{}'.format(details))
+
+        return details
 
     def create_stack(self, name, run, key_type=None):
         deployment_name = self._encode_name(name)
