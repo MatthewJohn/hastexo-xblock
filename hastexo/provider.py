@@ -277,32 +277,22 @@ class AwsProvider(Provider):
     def get_stacks(self):
         stacks = []
 
-        try:
-            response = self.ds.deployments().list(
-                project=self.project
-            ).execute()
-        except GcloudApiHttpError as e:
-            if e.resp.status == 404:
-                return stacks
-            else:
-                raise ProviderException(e)
-        except GcloudApiError as e:
-            raise ProviderException(e)
-
-        for deployment in response.get("deployments", []):
-            if not deployment["name"].startswith(self.deployment_name_prefix):
-                continue
-
-            try:
-                stack = {
-                    "name": deployment["description"],
-                    "status": self._get_deployment_status(deployment)
-                }
-            except Exception:
-                continue
-
-            stacks.append(stack)
-
+        # Find all SSM parameters
+        parameters = self.ssm_c.describe_parameters()['Parameters']
+        for parameter in parameters:
+            found_purpose_tag = False
+            stack_name = None
+            for tag in parameter['Tags']:
+                if tag['Name'] == 'Purpose' and tag['Value'] == 'Hastexo':
+                    found_purpose_tag
+                elif tag['Name'] == 'Stack':
+                    stack_name = tag['Value']
+            
+            if found_purpose_tag and stack_name:
+                stacks.append({
+                    "name": stack_name,
+                    "status": self.get_stack(stack_name)["status"]
+                })
         return stacks
 
     def _get_instance(self, name):
@@ -402,7 +392,11 @@ class AwsProvider(Provider):
                 Tags=[
                     {
                         'Key': 'Stack',
-                        'Value': deployment_name
+                        'Value': name
+                    },
+                    {
+                        'Key': 'Purpose',
+                        'Value': 'Hastexo'
                     },
                 ]
             )
