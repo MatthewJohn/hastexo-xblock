@@ -455,52 +455,36 @@ class AwsProvider(Provider):
         return self.get_stack(name)
 
     def delete_stack(self, name, wait=True):
-        self.get_stack(name)
+
         deployment_name = self._encode_name(name)
 
-        try:
-            self.logger.info('Deleting Google Cloud deployment '
-                             '[%s]' % deployment_name)
-            operation = self.ds.deployments().delete(
-                project=self.project, deployment=deployment_name
-            ).execute()
-        except GcloudApiError as e:
-            raise ProviderException(e)
+        self.logger.info('DELETE Finding instance')
+        instance = self._get_instance(name)
+        if instance:
+            instance.create_tags(
+                Tags=[
+                    {
+                        "Key": "deleted",
+                        "Value": "true"
+                    }
+                ]
+            )
+            instance.terminate()
+            self.logger.info('DELETE terminating instance')
+        else:
+            self.logger.info('DELETE no instance found')
 
-        status = DELETE_IN_PROGRESS
+        # Delete SSM parmeter
+        self.ssm_c.delete_parameter(
+            Name=deployment_name
+        )
 
-        # Wait until delete finishes.
-        if wait:
-            while True:
-                try:
-                    response = self.ds.operations().get(
-                        project=self.project,
-                        operation=operation["name"]
-                    ).execute()
+        # Delete keypair
+        self.ec2_c.delete_key_pair(
+            KeyName=deployment_name,
+        )
 
-                    if response["status"] == "DONE":
-                        if "error" in response:
-                            errors = response["error"].get("errors")
-                            if errors:
-                                message = errors[0]["message"]
-                            else:
-                                message = "Error in operation."
-                            raise ProviderException(message)
-
-                        status = DELETE_COMPLETE
-                        break
-                except GcloudApiHttpError as e:
-                    if e.resp.status == 404:
-                        status = DELETE_COMPLETE
-                        break
-                    else:
-                        raise ProviderException(e)
-                except GcloudApiError as e:
-                    raise ProviderException(e)
-
-                self.sleep()
-
-        return {"status": status}
+        return {"status": DELETE_COMPLETE}
 
     def suspend_stack(self, name, wait=True):
         return self.get_stack(name)
