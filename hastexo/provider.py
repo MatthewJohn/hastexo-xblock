@@ -19,6 +19,8 @@ from keystoneauth1.exceptions.http import HttpError
 from novaclient.exceptions import ClientException, NotFound
 from googleapiclient.errors import Error as GcloudApiError
 from googleapiclient.errors import HttpError as GcloudApiHttpError
+import boto3
+import botocore.config
 
 from .common import (
     b,
@@ -178,6 +180,394 @@ class Provider(object):
 
     def resume_stack(self):
         raise NotImplementedError()
+
+
+class AwsProvider(Provider):
+    """AWS Provider"""
+
+    default_credentials = {
+        "aws_access_key_id": "",
+        "aws_secret_access_key": "",
+        "aws_region": "eu-west-1",
+    }
+    ec2_c = None
+    ssm_c = None
+    ec2_r = None
+    # nova_c = None
+
+    def __init__(self, provider, config, sleep):
+        super(AwsProvider, self).__init__(provider, config, sleep)
+
+        self.ec2_c = self._get_ec2_client()
+        self.ssm_c = self._get_ssm_client()
+        self.ec2_r = self._get_ec2_resource()
+        # self.nova_c = self._get_nova_client()
+
+    def _get_session(self):
+        """Return AWS session object"""
+        return boto3.Session(
+            aws_access_key_id=self.credentials.get("aws_access_key_id"),
+            aws_secret_access_key=self.credentials.get("aws_secret_access_key"),
+        )
+
+    def _get_ec2_resource(self):
+        """Get Ec2 resource"""
+        session = self._get_session()
+        config = botocore.config.Config(region_name=self.credentials.get("aws_region"))
+        return boto3.resource("ec2", config=config, session=session)
+
+    def _get_ec2_client(self):
+        return boto3.client('ec2', 
+            aws_access_key_id=self.credentials.get("aws_access_key_id"),
+            aws_secret_access_key=self.credentials.get("aws_secret_access_key"),
+            region_name=self.credentials.get("aws_region")
+        )
+
+    def _get_ssm_client(self):
+        return boto3.client('ssm', 
+            aws_access_key_id=self.credentials.get("aws_access_key_id"),
+            aws_secret_access_key=self.credentials.get("aws_secret_access_key"),
+            region_name=self.credentials.get("aws_region")
+        )
+
+    def _get_ip_password_for_instance(self, name):
+        """Get IP and """
+
+    def _get_deployment_outputs(self, deployment):
+        name = deployment["name"]
+
+        public_ip, password = self._get_ip_password_for_instance(name)
+
+        outputs = {
+            "public_ip": public_ip,
+            "private_key": self._get_private_key_for_instance(name),
+            "password": password,
+            "reboot_on_resume": None,
+        }
+
+        return outputs
+
+    def _get_deployment_status(self, aws_state):
+        if aws_state == 0:
+            return "CREATE_PENDING"
+        elif aws_state == 16:
+            return CREATE_COMPLETE
+        elif aws_state == 32:
+            return "DELETE_{}".format(IN_PROGRESS)
+        elif aws_state == 48:
+            return "DELETE_COMPLETE"
+        elif aws_state == 64:
+            return SUSPEND_IN_PROGRESS
+        elif aws_state == 80:
+            return SUSPEND_COMPLETE
+        else:
+            raise ProviderException(f"Unknown AWS state: {aws_state}")
+
+    def _encode_name(self, name):
+        """
+        GCP enforces strict resource naming policies (regex
+        '[a-z](?:[-a-z0-9]{0,61}[a-z0-9])?'), so we work around it by naming
+        the stack with a hash.
+
+        """
+        return f"hastexo-{name}"
+
+    def get_stacks(self):
+        stacks = []
+
+        try:
+            response = self.ds.deployments().list(
+                project=self.project
+            ).execute()
+        except GcloudApiHttpError as e:
+            if e.resp.status == 404:
+                return stacks
+            else:
+                raise ProviderException(e)
+        except GcloudApiError as e:
+            raise ProviderException(e)
+
+        for deployment in response.get("deployments", []):
+            if not deployment["name"].startswith(self.deployment_name_prefix):
+                continue
+
+            try:
+                stack = {
+                    "name": deployment["description"],
+                    "status": self._get_deployment_status(deployment)
+                }
+            except Exception:
+                continue
+
+            stacks.append(stack)
+
+        return stacks
+
+    def _get_instance(self, name):
+        """Get instance resource for stack"""
+        deployment_name = self._encode_name(name)
+
+        # Get instance
+        ec2_instances = self.ec2_r.instances.filter(
+            Filters=[
+                {
+                    # Filter by key-name because why not
+                    'Name': 'key-name',
+                    'Values': [
+                        deployment_name
+                    ]
+                }
+            ]
+        )
+        if ec2_instances:
+            return ec2_instances[0]
+        return None
+
+    def _get_instance_outputs(self, name):
+        deployment_name = self._encode_name(name)
+        instance = self._get_instance(instance)
+        if not instance:
+            return {}
+        try:
+            param = self.ssm_c.get_parameter(
+                Name=deployment_name,
+                WithDecryption=True
+            )
+        except Exception as exc:
+            return {}
+        return {
+            "public_ip": instance.private_ip_address,
+            "private_key": param.get("Parameter").get("Value"),
+            "password": "",
+            "reboot_on_resume": None,
+        }
+
+    def get_stack(self, name):
+        deployment_name = self._encode_name(name)
+
+        # Get instance
+        instance = self._get_instance(name)
+        status = None
+        outputs = {}
+        if not instance:
+            status = DELETE_COMPLETE
+            return {"status": status, "outputs": outputs}
+        status_code = instance.state.get("Code")
+
+        return {
+            "status": self._get_deployment_status(status_code),
+            "outputs": self._get_instance_outputs(name)
+        }
+
+
+    def create_stack(self, name, run):
+        deployment_name = self._encode_name(name)
+
+        properties = {"run": run}
+
+        # Generate key pair with a b64-encoded private key because Deployment
+        # Manager can't handle properties with multi-line values
+        properties.update(self.generate_key_pair(True))
+        key_pair = self.generate_key_pair()
+
+        # Update properties with user-defined values
+        try:
+            env = yaml.safe_load(self.environment)
+        except (AttributeError, yaml.error.YAMLError):
+            raise ProviderException("Invalid environment YAML.")
+
+        # Check required values:
+        for prop in ["ami_id", "instance_type", "security_group_id", "subnet_id"]:
+            if not env.get(prop):
+                raise ProviderException(f"Missing required property: {prop}")
+
+        try:
+            self.logger.info('Creating AWS deployment '
+                             '[%s]' % deployment_name)
+            # Import key pair
+            response = self.ec2_c.import_key_pair(
+                KeyName=deployment_name,
+                PublicKeyMaterial=key_pair["public_key"]
+            )
+
+            # Upload keypair to SSM parameter store
+            response = self.ssm_c.put_parameter(
+                Name=deployment_name,
+                Description=deployment_name,
+                Value=key_pair["private_key"],
+                Type='SecureString',
+                Overwrite=False,
+                Tags=[
+                    {
+                        'Key': 'Stack',
+                        'Value': deployment_name
+                    },
+                ]
+            )
+
+            # Create instance
+            response = self.ec2_c.run_instances(
+                ImageId=env.get("ami_id"),
+                InstanceType=env.get("instance_type"),
+                KeyName=deployment_name,
+                MaxCount=1,
+                MinCount=1,
+                Monitoring={
+                    'Enabled': False
+                },
+                SecurityGroupIds=[
+                    env.get("security_group_id"),
+                ],
+                SubnetId=env.get("subnet_id"),
+                UserData=env.get("user_data", ""),
+                InstanceInitiatedShutdownBehavior='stop',
+                TagSpecifications=[
+                    {
+                        'ResourceType': 'instance',
+                        'Tags': [
+                            {
+                                'Key': 'name',
+                                'Value': name
+                            },
+                        ]
+                    },
+                ]
+            )
+        except Exception as e:
+            raise ProviderException(e)
+
+        return self.get_stack(name)
+
+    def delete_stack(self, name, wait=True):
+        self.get_stack(name)
+        deployment_name = self._encode_name(name)
+
+        try:
+            self.logger.info('Deleting Google Cloud deployment '
+                             '[%s]' % deployment_name)
+            operation = self.ds.deployments().delete(
+                project=self.project, deployment=deployment_name
+            ).execute()
+        except GcloudApiError as e:
+            raise ProviderException(e)
+
+        status = DELETE_IN_PROGRESS
+
+        # Wait until delete finishes.
+        if wait:
+            while True:
+                try:
+                    response = self.ds.operations().get(
+                        project=self.project,
+                        operation=operation["name"]
+                    ).execute()
+
+                    if response["status"] == "DONE":
+                        if "error" in response:
+                            errors = response["error"].get("errors")
+                            if errors:
+                                message = errors[0]["message"]
+                            else:
+                                message = "Error in operation."
+                            raise ProviderException(message)
+
+                        status = DELETE_COMPLETE
+                        break
+                except GcloudApiHttpError as e:
+                    if e.resp.status == 404:
+                        status = DELETE_COMPLETE
+                        break
+                    else:
+                        raise ProviderException(e)
+                except GcloudApiError as e:
+                    raise ProviderException(e)
+
+                self.sleep()
+
+        return {"status": status}
+
+    def suspend_stack(self, name, wait=True):
+        return self.get_stack(name)
+        deployment_name = self._encode_name(name)
+
+        # Get servers
+        servers = self._get_deployment_servers(deployment_name)
+
+        self.logger.info("Stopping servers in "
+                         "Google Cloud deployment [%s]" % deployment_name)
+
+        for server in servers:
+            status = server.get("status")
+            if status == "RUNNING":
+                try:
+                    self.logger.info("Stopping Google Compute "
+                                     "machine %s" % server)
+                    self.cs.instances().stop(
+                        project=self.project,
+                        zone=server["zone"].split('/')[-1],
+                        instance=server["name"]
+                    ).execute()
+                except GcloudApiError as e:
+                    raise ProviderException(e)
+            elif (status != "STOPPING" and
+                  status != "TERMINATED"):
+                raise ProviderException("Cannot not stop Google Compute "
+                                        "machine %s with status "
+                                        "%s" % (server["name"],
+                                                server["status"]))
+
+        status = SUSPEND_IN_PROGRESS
+
+        # Wait until suspend finishes.
+        if wait:
+            while True:
+                self.sleep()
+                servers = self._get_deployment_servers(deployment_name)
+                if all(s.get("status") == "TERMINATED" for s in servers):
+                    status = SUSPEND_COMPLETE
+                    break
+
+        return {"status": status}
+
+    def resume_stack(self, name):
+        return self.get_stack(name)
+        deployment_name = self._encode_name(name)
+
+        # Start the servers
+        servers = self._get_deployment_servers(deployment_name)
+
+        self.logger.info("Starting servers in "
+                         "Google Cloud deployment [%s]" % deployment_name)
+
+        for server in servers:
+            status = server.get("status")
+            if status == "TERMINATED":
+                try:
+                    self.logger.info("Stopping Google Compute "
+                                     "machine %s" % server)
+                    self.cs.instances().start(
+                        project=self.project,
+                        zone=server["zone"].split('/')[-1],
+                        instance=server["name"]
+                    ).execute()
+                except GcloudApiError as e:
+                    raise ProviderException(e)
+            elif (status != "RUNNING" and
+                  status != "STAGING"):
+                raise ProviderException("Cannot not stop Google Compute "
+                                        "machine %s with status "
+                                        "%s" % (server["name"],
+                                                server["status"]))
+
+        # Wait until resume finishes.
+        while True:
+            servers = self._get_deployment_servers(deployment_name)
+            if all(s.get("status") == "RUNNING" for s in servers):
+                break
+
+            self.sleep()
+
+        return self.get_stack(name)
 
 
 class OpenstackProvider(Provider):

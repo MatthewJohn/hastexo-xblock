@@ -24,4 +24,5 @@ twisted<23.8.0 # drop this restriction once we drop Python 3.8 and 3.9 support
 mysqlclient<=2.2.1  # keep in sync with edx-platform
 jsonfield>=3.1.0,<4   # keep in sync with edx-platform
 pyguacamole>=0.11
+boto3>=1.34.32
 -e .
