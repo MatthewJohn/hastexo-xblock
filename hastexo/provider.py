@@ -216,7 +216,7 @@ class AwsProvider(Provider):
         """Get Ec2 resource"""
         session = self._get_session()
         config = botocore.config.Config(region_name=self.credentials.get("aws_region"))
-        return boto3.resource("ec2", config=config, session=session)
+        return session.resource("ec2", config=config)
 
     def _get_ec2_client(self):
         return boto3.client('ec2', 
