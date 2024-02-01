@@ -68,6 +68,8 @@ class Provider(object):
                 return OpenstackProvider(name, config, sleep_seconds)
             elif provider_type == "gcloud":
                 return GcloudProvider(name, config, sleep_seconds)
+            elif provider_type == "aws":
+                return AwsProvider(name, config, sleep_seconds)
 
     def __init__(self, name, config, sleep):
         self.name = name
