@@ -324,7 +324,7 @@ class AwsProvider(Provider):
 
     def _get_instance_outputs(self, name):
         deployment_name = self._encode_name(name)
-        instance = self._get_instance(instance)
+        instance = self._get_instance(name)
         if not instance:
             return {}
         try:
