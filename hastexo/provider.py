@@ -354,7 +354,7 @@ class AwsProvider(Provider):
             "outputs": self._get_instance_outputs(name)
         }
 
-    def create_stack(self, name, run):
+    def create_stack(self, name, run, key_type=None):
         deployment_name = self._encode_name(name)
 
         properties = {"run": run}
