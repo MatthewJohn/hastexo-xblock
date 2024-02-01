@@ -326,8 +326,8 @@ class AwsProvider(Provider):
             if not deleted:
                 instance = instance_itx
                 break
-        if instance:
 
+        if instance:
             self.logger.info('Found instance '
                 '[%s]' % deployment_name)
             return ec2_instances[0]
@@ -463,7 +463,16 @@ class AwsProvider(Provider):
         except Exception as e:
             raise ProviderException(e)
 
-        return self.get_stack(name)
+
+        count = 0
+        while True:
+            res = self.get_stack(name)
+            if res["outputs"].get("public_ip"):
+                return res
+            time.sleep(5)
+            count += 1
+            if count == 6:
+                raise ProviderException("Could not determine private IP of instance within reasonable time")
 
     def delete_stack(self, name, wait=True):
 
