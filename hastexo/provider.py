@@ -282,6 +282,7 @@ class AwsProvider(Provider):
         for parameter in parameters:
             found_purpose_tag = False
             stack_name = None
+            deleted = False
             for tag in parameter['Tags']:
                 if tag['Name'] == 'Purpose' and tag['Value'] == 'Hastexo':
                     found_purpose_tag
@@ -316,7 +317,17 @@ class AwsProvider(Provider):
             ]
         )
         ec2_instances = [instance for instance in ec2_instances]
-        if ec2_instances:
+        instance = None
+        for instance_itx in ec2_instances:
+            deleted = False
+            for tag in instance_itx.tags:
+                if tag['Name'] == 'deleted':
+                    deleted = True
+            if not deleted:
+                instance = instance_itx
+                break
+        if instance:
+
             self.logger.info('Found instance '
                 '[%s]' % deployment_name)
             return ec2_instances[0]
