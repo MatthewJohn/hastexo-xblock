@@ -321,7 +321,7 @@ class AwsProvider(Provider):
         for instance_itx in ec2_instances:
             deleted = False
             for tag in instance_itx.tags:
-                if tag['Name'] == 'deleted':
+                if tag['Key'] == 'deleted':
                     deleted = True
             if not deleted:
                 instance = instance_itx
