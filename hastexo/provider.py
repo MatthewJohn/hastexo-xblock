@@ -378,9 +378,9 @@ class AwsProvider(Provider):
 
         # Update properties with user-defined values
         try:
-            env = yaml.safe_load(self.environment)
+            env = yaml.safe_load(self.template)
         except (AttributeError, yaml.error.YAMLError):
-            raise ProviderException("Invalid environment YAML.")
+            raise ProviderException("Invalid template YAML.")
 
         # Check required values:
         for prop in ["ami_id", "instance_type", "security_group_id", "subnet_id"]:
