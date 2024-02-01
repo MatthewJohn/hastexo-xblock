@@ -16,11 +16,11 @@ from .consumers import GuacamoleWebSocketConsumer  # noqa E402
 
 application = ProtocolTypeRouter({
     'websocket': AllowedHostsOriginValidator(
-        AuthMiddlewareStack(
+        #AuthMiddlewareStack(
             URLRouter([
                 path('hastexo-xblock/websocket-tunnel',
                      GuacamoleWebSocketConsumer.as_asgi()),
             ])
-        )
+        #)
     ),
 })
