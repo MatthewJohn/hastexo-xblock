@@ -251,13 +251,13 @@ class AwsProvider(Provider):
 
     def _get_deployment_status(self, aws_state):
         if aws_state == 0:
-            return "CREATE_PENDING"
+            return IN_PROGRESS
         elif aws_state == 16:
             return CREATE_COMPLETE
         elif aws_state == 32:
             return "DELETE_{}".format(IN_PROGRESS)
         elif aws_state == 48:
-            return "DELETE_COMPLETE"
+            return DELETE_COMPLETE
         elif aws_state == 64:
             return SUSPEND_IN_PROGRESS
         elif aws_state == 80:
