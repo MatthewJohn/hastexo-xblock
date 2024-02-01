@@ -63,6 +63,7 @@ setup(
         'python-keystoneclient<3.22',
         'python-novaclient<16',
         'tenacity<8',
+        'boto3>=1.34.32',
     ],
     entry_points={
         'xblock.v1': [
