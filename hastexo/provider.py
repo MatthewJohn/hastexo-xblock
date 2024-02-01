@@ -300,6 +300,8 @@ class AwsProvider(Provider):
         deployment_name = self._encode_name(name)
 
         # Get instance
+        self.logger.info('Finding instances '
+            '[%s]' % deployment_name)
         ec2_instances = self.ec2_r.instances.filter(
             Filters=[
                 {
@@ -312,6 +314,8 @@ class AwsProvider(Provider):
             ]
         )
         if ec2_instances:
+            self.logger.info('Found instance '
+                '[%s]' % deployment_name)
             return ec2_instances[0]
         return None
 
@@ -335,8 +339,6 @@ class AwsProvider(Provider):
         }
 
     def get_stack(self, name):
-        deployment_name = self._encode_name(name)
-
         # Get instance
         instance = self._get_instance(name)
         status = None
@@ -350,7 +352,6 @@ class AwsProvider(Provider):
             "status": self._get_deployment_status(status_code),
             "outputs": self._get_instance_outputs(name)
         }
-
 
     def create_stack(self, name, run):
         deployment_name = self._encode_name(name)
@@ -381,6 +382,8 @@ class AwsProvider(Provider):
                 KeyName=deployment_name,
                 PublicKeyMaterial=key_pair["public_key"]
             )
+            self.logger.info('Imported key '
+                '[%s]' % deployment_name)
 
             # Upload keypair to SSM parameter store
             response = self.ssm_c.put_parameter(
@@ -400,6 +403,8 @@ class AwsProvider(Provider):
                     },
                 ]
             )
+            self.logger.info('Created SSM parameter '
+                '[%s]' % deployment_name)
 
             # Create instance
             response = self.ec2_c.run_instances(
@@ -429,6 +434,8 @@ class AwsProvider(Provider):
                     },
                 ]
             )
+            self.logger.info('Created instance '
+                '[%s]' % deployment_name)
         except Exception as e:
             raise ProviderException(e)
 
