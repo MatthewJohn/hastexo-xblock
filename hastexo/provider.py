@@ -487,7 +487,8 @@ class AwsProvider(Provider):
         return {"status": DELETE_COMPLETE}
 
     def suspend_stack(self, name, wait=True):
-        return self.get_stack(name)
+        return {"status": SUSPEND_COMPLETE}
+        #self.delete_stack(name, wait)
         deployment_name = self._encode_name(name)
 
         # Get servers
